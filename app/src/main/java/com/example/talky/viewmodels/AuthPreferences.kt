@@ -27,5 +27,17 @@ class AuthPreferences(context: Context) {
         sharedPreferences.edit().putBoolean(pROFILESETUPCOMPLETED, isCompleted).apply()
     }
 
+    // Check if user is logged in
+    fun isUserLoggedIn(): Boolean {
+        return sharedPreferences.getBoolean(iSAUTHENTICATED, false)
+    }
 
+    // Log out the user
+    fun logoutUser() {
+        sharedPreferences.edit()
+            .remove(iSAUTHENTICATED)
+            .remove(uSERPHONENUMBER)
+            .remove(pROFILESETUPCOMPLETED)
+            .apply()
+    }
 }

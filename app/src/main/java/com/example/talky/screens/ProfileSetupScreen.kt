@@ -20,6 +20,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,8 +45,9 @@ fun ProfileSetupScreen(
     var lastName by remember { mutableStateOf("") }
     var profileImageUri by remember { mutableStateOf<Uri?>(null) }
     var profileDrawableRes by remember { mutableStateOf<Int?>(null) }
-    var isSaving by remember { mutableStateOf(false) }
-    var errorMessage by remember { mutableStateOf<String?>(null) }
+    var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
+    var isSaving by rememberSaveable { mutableStateOf(false) }
+
 
     val displayName = when {
         firstName.isNotEmpty() && lastName.isNotEmpty() -> "$firstName $lastName"
@@ -184,7 +186,7 @@ fun ProfileSetupScreen(
                 ) { success ->
                     isSaving = false
                     if (success) {
-                        navController.navigate(Screen.Main.route)
+                        navController.navigate(Screen.ChatList.route)
                     } else {
                         errorMessage = "Failed to save profile. Please try again."
                     }

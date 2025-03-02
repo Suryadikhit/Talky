@@ -192,7 +192,7 @@ fun LoginScreen(navController: NavController, viewModel: AuthViewModel) {
                 modifier = Modifier
                     .fillMaxWidth()
                     .background(Color(0xFF303133), shape = RoundedCornerShape(8.dp))
-                    .padding(12.dp)
+                    .padding(10.dp)
             ) {
                 BasicTextField(
                     value = phoneNumber,

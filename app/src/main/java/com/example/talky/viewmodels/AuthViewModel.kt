@@ -16,15 +16,14 @@ import com.google.firebase.auth.PhoneAuthCredential
 import com.google.firebase.auth.PhoneAuthOptions
 import com.google.firebase.auth.PhoneAuthProvider
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.Source
 import com.google.firebase.storage.FirebaseStorage
-import kotlinx.coroutines.Dispatchers
+import dagger.hilt.android.lifecycle.HiltViewModel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 import java.util.concurrent.TimeUnit
+import javax.inject.Inject
 
 data class OtpState(
     val otpCode: String = "",
@@ -38,12 +37,12 @@ data class OtpState(
     val canResend: Boolean = true
 )
 
-@Suppress("NAME_SHADOWING")
-class AuthViewModel(
-    private val authPreferences: AuthPreferences // ✅ Injecting missing instance
-) : ViewModel() {
+@HiltViewModel
+class AuthViewModel @Inject constructor(
+    private val authPreferences: AuthPreferences
+) : ViewModel(){
 
-    private val auth = FirebaseAuth.getInstance()
+private val auth = FirebaseAuth.getInstance()
     private val _otpState = MutableStateFlow(OtpState())
     val otpState: StateFlow<OtpState> = _otpState
 
@@ -60,90 +59,51 @@ class AuthViewModel(
     private val tag = "AuthViewModel" // Log tag for this ViewModel
 
     fun checkUserAuth(navController: NavController) {
-        viewModelScope.launch(Dispatchers.IO) {
+        viewModelScope.launch {
             Log.d(tag, "Checking user authentication...")
+
             val user = auth.currentUser
-            if (user != null) {
-                Log.d(tag, "User is logged in. Checking phone number...")
-                if (user.phoneNumber != null) {
-                    checkProfileAndNavigateToChat(user.uid, navController)
-                } else {
-                    Log.d(tag, "Phone number not set. Navigating to OTP screen...")
-                    withContext(Dispatchers.Main) {
-                        navController.navigate(Screen.Otp.route)
-                    }
+            val isLoggedIn = authPreferences.isUserLoggedIn()
+
+            if (user != null && isLoggedIn) {
+                Log.d(tag, "✅ User is logged in. Navigating to Main Screen...")
+                navController.navigate(Screen.ChatList.route) {
+                    popUpTo(0) // Clears back stack
                 }
             } else {
-                Log.d(tag, "No user found. Navigating to Intro screen...")
-                withContext(Dispatchers.Main) {
-                    navController.navigate(Screen.Intro.route)
+                Log.d(tag, "🚫 No user found or not logged in. Navigating to Intro screen...")
+                navController.navigate(Screen.Intro.route) {
+                    popUpTo(0) // Clears back stack
                 }
             }
         }
     }
 
-    private fun checkProfileAndNavigateToChat(userId: String, navController: NavController) {
-        viewModelScope.launch(Dispatchers.IO) {
-            Log.d(tag, "Checking if user profile exists in Firestore...")
-            firestore.collection("users").document(userId).get()
-                .addOnSuccessListener { documentSnapshot ->
-                    val profileExists = documentSnapshot.getString("profileImageUrl") != null
-                    viewModelScope.launch(Dispatchers.Main) {
-                        if (profileExists) {
-                            Log.d(tag, "Profile exists. Navigating to chat screen...")
-                            navController.navigate(Screen.Main.route)
-                        } else {
-                            Log.d(tag, "Profile not found. Navigating to profile setup screen...")
-                            navController.navigate(Screen.ProfileSetup.route)
-                        }
-                    }
-                }
-                .addOnFailureListener { exception ->
-                    Log.e(tag, "Error checking user profile: ${exception.message}")
-                }
-        }
+    fun getCurrentUserId(): String? {
+        return FirebaseAuth.getInstance().currentUser?.uid
     }
 
-    fun getUserProfileImageUrl(onComplete: (String) -> Unit) {
-        val userId = auth.currentUser?.uid
-            ?: return onComplete("default_url") // handle case when user is null
 
-        // Use Firestore's cache to reduce latency
+    fun getUserName(onResult: (String?) -> Unit) {
+        val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return onResult(null)
+
         firestore.collection("users").document(userId)
-            .get(Source.CACHE) // Fetch data from cache if available, otherwise it will still fall back to network
-            .addOnSuccessListener { documentSnapshot ->
-                val imageUrl = documentSnapshot.getString("profileImageUrl") ?: "default_url"
-                onComplete(imageUrl)
+            .get()
+            .addOnSuccessListener { document ->
+                if (document.exists()) {
+                    val name = document.getString("name") // Fetches the "name" field
+                    onResult(name)
+                } else {
+                    Log.e(tag, "User document does not exist in Firestore")
+                    onResult(null)
+                }
             }
             .addOnFailureListener { exception ->
-                Log.e(tag, "Error fetching profile image URL from cache: ${exception.message}")
-                // Fallback to network if cache is not available
-                firestore.collection("users").document(userId)
-                    .get() // This performs the network call if not in cache
-                    .addOnSuccessListener { documentSnapshot ->
-                        val imageUrl =
-                            documentSnapshot.getString("profileImageUrl") ?: "default_url"
-                        onComplete(imageUrl)
-                    }
-                    .addOnFailureListener { exception ->
-                        Log.e(
-                            tag,
-                            "Error fetching profile image URL from network: ${exception.message}"
-                        )
-                        onComplete("default_url")
-                    }
+                Log.e(tag, "Error fetching user name: ${exception.message}")
+                onResult(null)
             }
     }
 
-
-    private fun getDefaultProfileImageUrl(profileResId: Int): String {
-        // Return a URL or path to the default image based on the resource ID
-        return when (profileResId) {
-            R.drawable.man -> "https://firebasestorage.googleapis.com/v0/b/talky-23afa.firebasestorage.app/o/profile_images%2Fman.png?alt=media&token=6001e33f-86bc-4a71-8dd9-114843e997c8"
-            // Add more cases for other default images as needed
-            else -> "https://example.com/default_profile_picture.jpg" // Fallback to a generic default image
-        }
-    }
 
     fun saveUserProfile(
         name: String,
@@ -185,7 +145,14 @@ class AuthViewModel(
                 onComplete(false)
             }
     }
-
+    private fun getDefaultProfileImageUrl(profileResId: Int): String {
+        // Return a URL or path to the default image based on the resource ID
+        return when (profileResId) {
+            R.drawable.man -> "https://firebasestorage.googleapis.com/v0/b/talky-23afa.firebasestorage.app/o/profile_images%2Fman.png?alt=media&token=6001e33f-86bc-4a71-8dd9-114843e997c8"
+            // Add more cases for other default images as needed
+            else -> "https://example.com/default_profile_picture.jpg" // Fallback to a generic default image
+        }
+    }
     private fun saveUserToFirestore(
         userId: String,
         name: String,
@@ -260,11 +227,8 @@ class AuthViewModel(
                 if (querySnapshot.isEmpty) {
                     // New user, send OTP for verification
                     sendOtpRequest(phoneNumber, activity, navController)
-                } else {
-                    // User exists, log them in directly
-                    val user = querySnapshot.documents.first()
-                    Log.d(tag, "User found in Firestore. Navigating to chat screen...")
-                    checkProfileAndNavigateToChat(user.id, navController)
+
+
                 }
             }
             .addOnFailureListener { exception ->

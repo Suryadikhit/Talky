@@ -2,60 +2,46 @@ package com.example.talky
 
 import android.annotation.SuppressLint
 import android.os.Bundle
-import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.material3.Scaffold
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.navigation.NavHostController
 import androidx.navigation.compose.rememberNavController
 import com.example.talky.navigation.NavGraph
 import com.example.talky.viewmodels.AuthPreferences
 import com.example.talky.viewmodels.AuthViewModel
+import com.example.talky.viewmodels.ChatViewModel
+import dagger.hilt.android.AndroidEntryPoint
+import javax.inject.Inject
 
+@AndroidEntryPoint
 class MainActivity : ComponentActivity() {
-    private lateinit var authViewModel: AuthViewModel
-
+    @Inject
+    lateinit var authPreferences: AuthPreferences
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        Log.d("MainActivity", "onCreate called")
-
-        try {
-            authViewModel = AuthViewModel(authPreferences = AuthPreferences(this))
-            Log.d("MainActivity", "AuthViewModel initialized successfully")
-        } catch (e: Exception) {
-            Log.e("MainActivity", "Error initializing AuthViewModel: ${e.message}")
-            return
-        }
-
+        println("AuthPreferences injected: ${authPreferences.isUserLoggedIn()}")
         setContent {
             val navController = rememberNavController()
-            Log.d("MainActivity", "NavController initialized")
-
-            LaunchedEffect(Unit) {
-                try {
-                    Log.d("MainActivity", "LaunchedEffect triggered, checking user authentication")
-                    authViewModel.checkUserAuth(navController)
-                } catch (e: Exception) {
-                    Log.e("MainActivity", "Error during authentication check: ${e.message}")
-                }
-            }
-
-            TalkyApp(navController, authViewModel)
+            TalkyApp(navController)
         }
     }
 }
 
-
 @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
 @Composable
-fun TalkyApp(navController: NavHostController, viewModel: AuthViewModel) {
-    Log.d("TalkyApp", "TalkyApp Composable called")
+fun TalkyApp(navController: NavHostController) {
+    val authViewModel: AuthViewModel = hiltViewModel()
+    val chatViewModel: ChatViewModel = hiltViewModel()
+
+    LaunchedEffect(authViewModel) {
+        authViewModel.checkUserAuth(navController)
+    }
 
     Scaffold {
-        Log.d("TalkyApp", "Scaffold initialized")
-        // Navigating using NavGraph
-        NavGraph(navController, viewModel)
+        NavGraph(navController, authViewModel, chatViewModel)
     }
 }
