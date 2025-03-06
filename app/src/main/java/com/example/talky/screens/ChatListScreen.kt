@@ -1,6 +1,5 @@
 package com.example.talky.screens
 
-import android.content.Context
 import android.net.Uri
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -23,7 +22,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavController
@@ -41,19 +39,10 @@ fun ChatListScreen(
     chatViewModel: ChatViewModel,
     navController: NavController
 ) {
-    val context = LocalContext.current
-    val sharedPreferences = remember { context.getSharedPreferences("TalkyPrefs", Context.MODE_PRIVATE) }
 
-    val username by produceState(initialValue = sharedPreferences.getString("username", "User") ?: "User") {
-        authViewModel.getUserName { name ->
-            if (!name.isNullOrEmpty() && name != value) {
-                value = name
-                sharedPreferences.edit().putString("username", name).apply()
-            }
-        }
-    }
+    val userState by authViewModel.userState.collectAsState()
+    val chatList by remember { chatViewModel.chatList }.collectAsState()
 
-    val chatList by chatViewModel.chatList.collectAsState()
 
     // ✅ Cache for user names & last messages
     val userNameCache = remember { mutableMapOf<String, String>() }
@@ -67,7 +56,12 @@ fun ChatListScreen(
                 .padding(paddingValues)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                TopRow(username, onSearchClick = {}, onMenuClick = {})
+                TopRow(
+                    username = userState.username ?: "Guest",
+                    profilePicUrl = userState.profilePicUrl,
+                    onSearchClick = { /* Handle search */ },
+                    onMenuClick = { /* Handle menu */ }
+                )
 
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(chatList) { chat ->

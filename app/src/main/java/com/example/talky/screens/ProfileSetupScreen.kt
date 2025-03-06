@@ -26,14 +26,17 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavController
 import com.example.talky.components.ProfileImagePicker
 import com.example.talky.navigation.Screen
 import com.example.talky.viewmodels.AuthViewModel
+import kotlinx.coroutines.launch
 
 @Composable
 fun ProfileSetupScreen(
@@ -47,7 +50,7 @@ fun ProfileSetupScreen(
     var profileDrawableRes by remember { mutableStateOf<Int?>(null) }
     var errorMessage by rememberSaveable { mutableStateOf<String?>(null) }
     var isSaving by rememberSaveable { mutableStateOf(false) }
-
+val context = LocalContext.current
 
     val displayName = when {
         firstName.isNotEmpty() && lastName.isNotEmpty() -> "$firstName $lastName"
@@ -182,12 +185,14 @@ fun ProfileSetupScreen(
                     fullName,
                     phoneNumber,
                     profileImageUri,
-                    profileDrawableRes
+                    context
                 ) { success ->
                     isSaving = false
                     if (success) {
-                        navController.navigate(Screen.ChatList.route)
-                    } else {
+                        viewModel.viewModelScope.launch {
+                            viewModel.fetchUserData() // ✅ Now inside coroutine
+                            navController.navigate(Screen.ChatList.route)
+                        }} else {
                         errorMessage = "Failed to save profile. Please try again."
                     }
                 }

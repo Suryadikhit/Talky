@@ -11,6 +11,8 @@ class AuthPreferences(context: Context) {
     private val iSAUTHENTICATED = "isAuthenticated"
     private val uSERPHONENUMBER = "userPhoneNumber"
     private val pROFILESETUPCOMPLETED = "profileSetupCompleted"
+    private val uSERNAME = "username"
+    private val pROFILEPIC = "profilePic"
 
     // Save authentication status
     fun saveAuthStatus(isAuthenticated: Boolean) {
@@ -38,6 +40,8 @@ class AuthPreferences(context: Context) {
             .remove(iSAUTHENTICATED)
             .remove(uSERPHONENUMBER)
             .remove(pROFILESETUPCOMPLETED)
+            .remove(uSERNAME)
+            .remove(pROFILEPIC)
             .apply()
     }
 }

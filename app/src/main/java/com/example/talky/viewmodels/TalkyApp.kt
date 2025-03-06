@@ -1,4 +1,4 @@
-package com.example.talky
+package com.example.talky.viewmodels
 
 
 import android.app.Application

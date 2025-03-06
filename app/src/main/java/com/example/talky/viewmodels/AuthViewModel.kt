@@ -1,13 +1,14 @@
 package com.example.talky.viewmodels
 
 import android.app.Activity
+import android.content.Context
 import android.net.Uri
 import android.os.CountDownTimer
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import androidx.navigation.NavController
-import com.example.talky.R
+import com.example.talky.ApiService
 import com.example.talky.navigation.Screen
 import com.google.firebase.FirebaseException
 import com.google.firebase.auth.FirebaseAuth
@@ -15,13 +16,19 @@ import com.google.firebase.auth.FirebaseAuthInvalidCredentialsException
 import com.google.firebase.auth.PhoneAuthCredential
 import com.google.firebase.auth.PhoneAuthOptions
 import com.google.firebase.auth.PhoneAuthProvider
-import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.storage.FirebaseStorage
 import dagger.hilt.android.lifecycle.HiltViewModel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.RequestBody.Companion.asRequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import java.io.File
+import java.io.FileOutputStream
+import java.io.InputStream
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
 
@@ -37,20 +44,25 @@ data class OtpState(
     val canResend: Boolean = true
 )
 
+data class UserState(
+    val username: String? = null,
+    val profilePicUrl: String? = null
+)
+
 @HiltViewModel
 class AuthViewModel @Inject constructor(
-    private val authPreferences: AuthPreferences
-) : ViewModel(){
+    private val authPreferences: AuthPreferences,
+    private val apiService: ApiService,
+    private val auth: FirebaseAuth,
+) : ViewModel() {
 
-private val auth = FirebaseAuth.getInstance()
+
     private val _otpState = MutableStateFlow(OtpState())
     val otpState: StateFlow<OtpState> = _otpState
 
     private var countDownTimer: CountDownTimer? = null
     private val timeoutSeconds = 60L
 
-    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
-    private val storage: FirebaseStorage = FirebaseStorage.getInstance()
 
     private val _isAuthenticated = MutableStateFlow(auth.currentUser != null)
     val isAuthenticated: StateFlow<Boolean> get() = _isAuthenticated
@@ -58,126 +70,167 @@ private val auth = FirebaseAuth.getInstance()
 
     private val tag = "AuthViewModel" // Log tag for this ViewModel
 
+    init {
+        fetchUserData()
+    }
+
+    private val _userState = MutableStateFlow(UserState()) // ✅ Ensure it's MutableStateFlow
+    val userState: StateFlow<UserState> = _userState
+
+    internal fun fetchUserData() {
+        val firebaseUser = auth.currentUser ?: return
+        val uid = firebaseUser.uid.takeIf { it.isNotBlank() } ?: return
+
+        viewModelScope.launch {
+            try {
+                val response = apiService.getUser(uid)
+                if (response.isSuccessful) {
+                    response.body()?.let { user ->
+                        _userState.value = UserState(username = user.username, profilePicUrl = user.profilePic)
+                    }
+                } else {
+                    Log.e(tag, "❌ Failed to fetch user data")
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "❌ Error fetching user data", e)
+            }
+        }
+    }
+
+
+
+
     fun checkUserAuth(navController: NavController) {
         viewModelScope.launch {
             Log.d(tag, "Checking user authentication...")
 
-            val user = auth.currentUser
-            val isLoggedIn = authPreferences.isUserLoggedIn()
-
-            if (user != null && isLoggedIn) {
-                Log.d(tag, "✅ User is logged in. Navigating to Main Screen...")
+            if (authPreferences.isUserLoggedIn()) {
+                Log.d(tag, "✅ User is logged in. Navigating to ChatList screen...")
                 navController.navigate(Screen.ChatList.route) {
-                    popUpTo(0) // Clears back stack
+                    popUpTo(0)
                 }
             } else {
-                Log.d(tag, "🚫 No user found or not logged in. Navigating to Intro screen...")
+                Log.d(tag, "🚫 No valid user found. Navigating to Intro screen...")
                 navController.navigate(Screen.Intro.route) {
-                    popUpTo(0) // Clears back stack
+                    popUpTo(0)
                 }
             }
         }
     }
 
-    fun getCurrentUserId(): String? {
-        return FirebaseAuth.getInstance().currentUser?.uid
-    }
 
-
-    fun getUserName(onResult: (String?) -> Unit) {
-        val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return onResult(null)
-
-        firestore.collection("users").document(userId)
-            .get()
-            .addOnSuccessListener { document ->
-                if (document.exists()) {
-                    val name = document.getString("name") // Fetches the "name" field
-                    onResult(name)
-                } else {
-                    Log.e(tag, "User document does not exist in Firestore")
-                    onResult(null)
-                }
-            }
-            .addOnFailureListener { exception ->
-                Log.e(tag, "Error fetching user name: ${exception.message}")
-                onResult(null)
-            }
-    }
+    fun getCurrentUserId(): String? = auth.currentUser?.uid
 
 
     fun saveUserProfile(
-        name: String,
+        name: String,  // ✅ This is the actual username entered by the user
         phoneNumber: String,
         profileUri: Uri?,
-        profileResId: Int?,
+        context: Context,
         onComplete: (Boolean) -> Unit
     ) {
         val userId = auth.currentUser?.uid ?: return onComplete(false)
         Log.d(tag, "Saving user profile for user: $userId")
 
-        // Save to preferences
         authPreferences.saveAuthStatus(true)
         authPreferences.savePhoneNumber(phoneNumber)
 
-        // Profile image URL logic
-        val profileImageUrl = when {
-            profileUri != null -> null // URI means image will be uploaded
-            profileResId != null -> getDefaultProfileImageUrl(profileResId) // Get URL for the default profile image
-            else -> "" // No profile image
-        }
-
-        // If the profile image URL is not null, save it to Firestore directly
-        if (profileImageUrl != null) {
-            saveUserToFirestore(userId, name, phoneNumber, profileImageUrl, onComplete)
+        if (profileUri == null) {
+            saveUserToBackend(name, phoneNumber, "", onComplete)
             return
         }
 
-        // Upload profile image if a new image is selected
-        val profileRef = storage.reference.child("profile_images/$userId.jpg")
-        profileRef.putFile(profileUri!!)
-            .addOnSuccessListener {
-                profileRef.downloadUrl.addOnSuccessListener { uri ->
-                    saveUserToFirestore(userId, name, phoneNumber, uri.toString(), onComplete)
-                }
-            }
-            .addOnFailureListener {
-                Log.e(tag, "Error uploading profile image: ${it.message}")
+        // ✅ Pass actual username to uploadProfilePicture
+        uploadProfilePicture(userId, name, profileUri, context) { uploadedImageUrl ->
+            if (uploadedImageUrl != null) {
+                saveUserToBackend(name, phoneNumber, uploadedImageUrl, onComplete)
+            } else {
                 onComplete(false)
             }
-    }
-    private fun getDefaultProfileImageUrl(profileResId: Int): String {
-        // Return a URL or path to the default image based on the resource ID
-        return when (profileResId) {
-            R.drawable.man -> "https://firebasestorage.googleapis.com/v0/b/talky-23afa.firebasestorage.app/o/profile_images%2Fman.png?alt=media&token=6001e33f-86bc-4a71-8dd9-114843e997c8"
-            // Add more cases for other default images as needed
-            else -> "https://example.com/default_profile_picture.jpg" // Fallback to a generic default image
         }
     }
-    private fun saveUserToFirestore(
+
+
+    private fun uploadProfilePicture(
         userId: String,
+        username: String,  // ✅ Use the actual username provided by the user
+        imageUri: Uri,
+        context: Context,
+        onComplete: (String?) -> Unit
+    ) {
+        val file = uriToFile(imageUri, context, userId)
+        val requestFile = file.asRequestBody("image/*".toMediaTypeOrNull())
+
+        val body = MultipartBody.Part.createFormData("profile", file.name, requestFile)
+        val usernameRequestBody = username.toRequestBody("text/plain".toMediaTypeOrNull()) // ✅ Send actual username
+        val uidRequestBody = userId.toRequestBody("text/plain".toMediaTypeOrNull()) // ✅ Send UID
+
+        viewModelScope.launch {
+            try {
+                val response = apiService.uploadProfilePicture(body, usernameRequestBody, uidRequestBody)
+                if (response.isSuccessful) {
+                    val imageUrl = response.body()?.imageUrl
+                    Log.d(tag, "✅ Profile picture uploaded: $imageUrl")
+                    onComplete(imageUrl)
+                } else {
+                    Log.e(tag, "❌ Failed to upload profile picture: ${response.errorBody()?.string()}")
+                    onComplete(null)
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "❌ Exception: ${e.message}")
+                onComplete(null)
+            }
+        }
+    }
+
+
+
+    private fun uriToFile(uri: Uri, context: Context, userId: String): File {
+        val inputStream: InputStream? = context.contentResolver.openInputStream(uri)
+        val file = File(context.cacheDir, "$userId.jpg") // Unique file name
+        inputStream?.use { input ->
+            FileOutputStream(file).use { output ->
+                input.copyTo(output)
+            }
+        }
+        return file
+    }
+
+    private fun saveUserToBackend(
         name: String,
         phoneNumber: String,
         profileImageUrl: String,
         onComplete: (Boolean) -> Unit
     ) {
-        Log.d(tag, "Saving user data to Firestore for user: $userId")
+        val uid = auth.currentUser?.uid ?: return onComplete(false).also {
+            Log.e(tag, "❌ Firebase UID is null. Cannot save user.")
+        }
+
         val userMap = mapOf(
-            "userId" to userId,
-            "name" to name,
-            "phoneNumber" to phoneNumber,
-            "profileImageUrl" to profileImageUrl // Save the image URL (either from Firebase storage or default)
+            "uid" to uid,
+            "username" to name,
+            "profilePic" to profileImageUrl,
+            "phoneNumber" to phoneNumber
         )
-        firestore.collection("users").document(userId).set(userMap)
-            .addOnSuccessListener {
-                Log.d(tag, "User saved successfully.")
-                authPreferences.saveProfileSetupStatus(true)
-                onComplete(true)
-            }
-            .addOnFailureListener {
-                Log.e(tag, "Error saving user to Firestore: ${it.message}")
+
+        viewModelScope.launch {
+            try {
+                val response = apiService.saveUser(userMap)
+                if (response.isSuccessful) {
+                    Log.d(tag, "✅ User saved to PostgreSQL successfully.")
+                    authPreferences.saveProfileSetupStatus(true)
+                    onComplete(true)
+                } else {
+                    Log.e(tag, "❌ Failed to save user: ${response.errorBody()?.string()}")
+                    onComplete(false)
+                }
+            } catch (e: Exception) {
+                Log.e(tag, "❌ Exception: ${e.message}")
                 onComplete(false)
             }
+        }
     }
+
 
 
     fun resetOtpState() {
@@ -186,21 +239,16 @@ private val auth = FirebaseAuth.getInstance()
     }
 
     fun startTimer() {
-        // Start a new countdown timer
-        countDownTimer = object : CountDownTimer(timeoutSeconds * 1000, 1000) {
-            override fun onTick(millisUntilFinished: Long) {
-                _otpState.update {
-                    it.copy(timerSeconds = (millisUntilFinished / 1000).toInt(), canResend = false)
-                }
-                Log.d(tag, "Timer ticking: ${millisUntilFinished / 1000} seconds remaining")
+        viewModelScope.launch {
+            _otpState.update { it.copy(timerSeconds = timeoutSeconds.toInt(), canResend = false) }
+            for (i in timeoutSeconds.toInt() downTo 0) {
+                delay(1000)
+                _otpState.update { it.copy(timerSeconds = i) }
             }
-
-            override fun onFinish() {
-                _otpState.update { it.copy(canResend = true) }
-                Log.d(tag, "Timer finished. Resend enabled.")
-            }
-        }.start()
+            _otpState.update { it.copy(canResend = true) }
+        }
     }
+
 
 
     fun sendOtp(phoneNumber: String, activity: Activity?, navController: NavController) {
@@ -208,34 +256,19 @@ private val auth = FirebaseAuth.getInstance()
 
         if (!phoneNumber.matches("^\\+?[1-9]\\d{6,14}$".toRegex())) {
             _otpState.update { it.copy(otpError = "Invalid phone number format!") }
-            Log.d(tag, "Invalid phone number format!")
             return
         }
 
         if (activity == null) {
             _otpState.update { it.copy(otpError = "Error: Activity is null") }
-            Log.e(tag, "Activity is null, cannot send OTP.")
             return
         }
 
         _otpState.update { it.copy(isSendingOtp = true, otpError = null) }
 
-        firestore.collection("users")
-            .whereEqualTo("phoneNumber", phoneNumber)
-            .get()
-            .addOnSuccessListener { querySnapshot ->
-                if (querySnapshot.isEmpty) {
-                    // New user, send OTP for verification
-                    sendOtpRequest(phoneNumber, activity, navController)
-
-
-                }
-            }
-            .addOnFailureListener { exception ->
-                _otpState.update { it.copy(otpError = "Error checking user existence: ${exception.message}") }
-                Log.e(tag, "Error checking user existence: ${exception.message}")
-            }
+        sendOtpRequest(phoneNumber, activity, navController)
     }
+
 
     private fun sendOtpRequest(
         phoneNumber: String,

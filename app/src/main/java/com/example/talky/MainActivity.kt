@@ -23,7 +23,7 @@ class MainActivity : ComponentActivity() {
     lateinit var authPreferences: AuthPreferences
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        println("AuthPreferences injected: ${authPreferences.isUserLoggedIn()}")
+        println("com.example.talky.viewmodels.AuthPreferences injected: ${authPreferences.isUserLoggedIn()}")
         setContent {
             val navController = rememberNavController()
             TalkyApp(navController)

@@ -1,8 +1,7 @@
-package com.example.talky
+package com.example.talky.viewmodels
 
 
 import android.content.Context
-import com.example.talky.viewmodels.AuthPreferences
 import dagger.Module
 import dagger.Provides
 import dagger.hilt.InstallIn
